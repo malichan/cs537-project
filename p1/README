@@ -1,0 +1,8 @@
+CS 537 Project 1 - Warm-up Project
+Ke Ma
+
+1a) Text Sorting
+Implemented a simple sorting program to sort lines in a input text file according to their i-th words. Used 3-way string quicksort as the base sorting algorithm.
+
+1b) xv6 Intro
+Added a simple system call getprocs() to the xv6 kernel, which returns the number of processes that exist in the system at the time of the call.
