@@ -2,68 +2,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
-const char* ERR_MSG = "An error has occurred\n";
-const int ERR_MSG_LEN = 22;
+/* Constants */
 
-/* Data Structures */
-
-typedef struct listNode {
-    struct listNode* next;
-    char* value;
-} listNode;
-
-typedef struct list {
-    listNode* head;
-    listNode* tail;
-    int size;
-} list;
-
-list* createList() {
-    list* l = (list*)malloc(sizeof(list));
-    l->head = NULL;
-    l->tail = NULL;
-    l->size = 0;
-    return l;
-}
-
-void appendToList(list* l, char* v) {
-    listNode* node = (listNode*)malloc(sizeof(listNode));
-    node->next = NULL;
-    node->value = v;
-    if (l->tail == NULL) {
-        l->head = node;
-        l->tail = node;
-        l->size = 1;
-    } else {
-        l->tail->next = node;
-        l->tail = node;
-        l->size += 1;
-    }
-}
-
-void deleteList(list* l) {
-    listNode* node = l->head;
-    while (node != NULL) {
-        listNode* next = node->next;
-        free(node);
-        node = next;
-    }
-    free(l);
-}
+const char* ERROR_MESSAGE = "An error has occurred";
+const char* DEFAULT_PATH = "/bin";
 
 /* Utility Functions */
 
 char* getLine128() {
     static char buffer[130];
     if (fgets(buffer, 130, stdin) == NULL) {
-        write(STDERR_FILENO, ERR_MSG, ERR_MSG_LEN);
         return NULL;
     }
 
     char* newline = strchr(buffer, '\n');
     if (newline == NULL) {
-        write(STDERR_FILENO, ERR_MSG, ERR_MSG_LEN);
         while (fgets(buffer, 130, stdin) != NULL) {
             if (strchr(buffer, '\n') != NULL) {
                 break;
@@ -76,70 +33,176 @@ char* getLine128() {
     return buffer;
 }
 
-void parseArgList(char* line, int* argc, char*** argv) {
-    list* token_list = createList();
-    char* token = strtok (line, " ");
-    while (token != NULL)
-    {
-        appendToList(token_list, token);
-        token = strtok (NULL, " ");
+void createArgList(char* line, int* nargs, char*** args) {
+    int _nargs = 0;
+    char last = ' ';
+    int i = -1;
+    while (line[++i] != '\0') {
+        if (last == ' ' && line[i] != ' ') {
+            ++_nargs;
+        }
+        last = line[i];
     }
 
-    int my_argc = token_list->size;
-    char** my_argv = malloc((my_argc + 1) * sizeof(char*));
-    listNode* node = token_list->head;
-    int i = 0;
-    for (; i < my_argc; ++i) {
-        my_argv[i] = strdup(node->value);
-        node = node->next;
+    char** _args = NULL;
+    if (_nargs > 0) {
+        _args = (char**)malloc((_nargs + 1) * sizeof(char*));
+        last = ' ';
+        i = -1;
+        int k = 0;
+        while (line[++i] != '\0') {
+            if (last != ' ' && line[i] == ' ') {
+                line[i] = '\0';
+                last = ' ';
+                continue;
+            }
+            if (last == ' ' && line[i] != ' ') {
+                _args[k++] = &line[i];
+                last = line[i];
+            }
+            last = line[i];
+        }
+        _args[k] = NULL;
     }
-    my_argv[my_argc] = NULL;
-    deleteList(token_list);
 
-    *argc = my_argc;
-    *argv = my_argv;
+    *nargs = _nargs;
+    *args = _args;
 }
 
-void clearArgList(int* argc, char*** argv) {
-    int i = 0;
-    for (; i < *argc; ++i) {
-        free((*argv)[i]);
+void clearArgList(int* nargs, char*** args) {
+    free(*args);
+    *nargs = 0;
+    *args = NULL;
+}
+
+void createPathList(int nargs, char** args, int* npaths, char*** paths) {
+    int _npaths = nargs - 1;
+    char** _paths = NULL;
+    if (_npaths > 0) {
+        _paths = (char**)malloc(_npaths * sizeof(char*));
+        int i = 0;
+        for (; i < _npaths; ++i) {
+            _paths[i] = strdup(args[i + 1]);
+        }
     }
-    free(*argv);
-    *argc = 0;
-    *argv = NULL;
+
+    *npaths = _npaths;
+    *paths = _paths;
+}
+
+void clearPathList(int* npaths, char*** paths) {
+    int i = 0;
+    for (; i < *npaths; ++i) {
+        free((*paths)[i]);
+    }
+    if (*npaths > 0) {
+        free(*paths);
+    }
+    *npaths = 0;
+    *paths = NULL;
+}
+
+char* findExecutable(char* name, int npaths, char** paths) {
+    static struct stat buffer;
+    if (stat(name, &buffer) == 0) {
+        return strdup(name);
+    }
+    int i = 0;
+    for (; i < npaths; ++i) {
+        int length = strlen(name) + strlen(paths[i]) + 1;
+        char* filename = (char*)malloc((length + 1) * sizeof(char));
+        strcpy(filename, paths[i]);
+        strcat(filename, "/");
+        strcat(filename, name);
+        if (stat(filename, &buffer) == 0) {
+            return filename;
+        }
+        free(filename);
+    }
+    return NULL;
 }
 
 /* Main Program */
 
 int main(int argc, char* argv[]) {
     if (argc != 1) {
-        write(STDERR_FILENO, ERR_MSG, ERR_MSG_LEN);
+        fprintf(stderr, "%s\n", ERROR_MESSAGE);
         return 1;
     }
 
+    char* command_line = NULL;
+    int nargs = 0;
+    char** args = NULL;
+    int npaths = 1;
+    char** paths = (char**)malloc(sizeof(char*));
+    paths[0] = strdup(DEFAULT_PATH);
+
     while (1) {
         printf("whoosh> ");
-        char* command_line = getLine128();
-        if (command_line == NULL) {
+        fflush(stdout);
+        if ((command_line = getLine128()) == NULL) {
+            fprintf(stderr, "%s\n", ERROR_MESSAGE);
             continue;
         }
 
-        int my_argc = 0;
-        char** my_argv = NULL;
-        parseArgList(command_line, &my_argc, &my_argv);
+        //----------------------------------------
+        // printf("* command line = %s\n", command_line);
+        //----------------------------------------
 
-        printf("argc = %d\n", my_argc);
-        int i = 0;
-        for (;i < my_argc; ++i) {
-            printf("argv[%d] = %s\n", i, my_argv[i]);
+        createArgList(command_line, &nargs, &args);
+
+        //----------------------------------------
+        // printf("* argc = %d\n", nargs);
+        // int i = 0;
+        // for (;i < nargs; ++i) {
+        //     printf("* argv[%d] = %s\n", i, args[i]);
+        // }
+        //----------------------------------------
+
+        if (nargs > 0) {
+            if (strcmp(args[0], "exit") == 0) {
+                clearPathList(&npaths, &paths);
+                clearArgList(&nargs, &args);
+                return 0;
+            } else if (strcmp(args[0], "pwd") == 0) {
+                char* pwd = getcwd(NULL, 0);
+                printf("%s\n", pwd);
+                free(pwd);
+            } else if (strcmp(args[0], "cd") == 0) {
+                char* path = nargs > 1? args[1]: getenv("HOME");
+                if (chdir(path) != 0) {
+                    fprintf(stderr, "%s\n", ERROR_MESSAGE);
+                }
+            } else if (strcmp(args[0], "path") == 0) {
+                clearPathList(&npaths, &paths);
+                createPathList(nargs, args, &npaths, &paths);
+                //----------------------------------------
+                // printf("* #paths = %d\n", npaths);
+                // int i = 0;
+                // for (;i < npaths; ++i) {
+                //     printf("* paths[%d] = %s\n", i, paths[i]);
+                // }
+                //----------------------------------------
+            } else if ((args[0] = findExecutable(args[0], npaths, paths)) != NULL) {
+                //----------------------------------------
+                // printf("* filename = %s\n", args[0]);
+                //----------------------------------------
+                int pid = fork();
+                if (pid > 0) {
+                    if (wait(NULL) != pid) {
+                        fprintf(stderr, "%s\n", ERROR_MESSAGE);
+                    }
+                } else if (pid == 0) {
+                    execv(args[0], args);
+                    fprintf(stderr, "%s\n", ERROR_MESSAGE);
+                } else {
+                    fprintf(stderr, "%s\n", ERROR_MESSAGE);
+                }
+                free(args[0]);
+            } else {
+                fprintf(stderr, "%s\n", ERROR_MESSAGE);
+            }
+            clearArgList(&nargs, &args);
         }
-
-        if (strcmp(my_argv[0], "exit") == 0) {
-            clearArgList(&my_argc, &my_argv);
-            return 0;
-        }
-
-        clearArgList(&my_argc, &my_argv);
     }
 }
