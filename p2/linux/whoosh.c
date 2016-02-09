@@ -209,11 +209,11 @@ int main(int argc, char* argv[]) {
         createArgList(command_line, &nargs, &args);
 
         //----------------------------------------
-        printf("* argc = %d\n", nargs);
-        int i = 0;
-        for (;i < nargs; ++i) {
-            printf("* argv[%d] = %s\n", i, args[i]);
-        }
+        // printf("* argc = %d\n", nargs);
+        // int i = 0;
+        // for (;i < nargs; ++i) {
+        //     printf("* argv[%d] = %s\n", i, args[i]);
+        // }
         //----------------------------------------
 
         if (nargs > 0) {
@@ -251,10 +251,12 @@ int main(int argc, char* argv[]) {
                         fprintf(stderr, "%s\n", ERROR_MESSAGE);
                     }
                 } else if (pid == 0) {
-                    close(STDOUT_FILENO);
-                    open(out, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR);
-                    close(STDERR_FILENO);
-                    open(err, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR);
+                    if (out != NULL && err != NULL) {
+                        close(STDOUT_FILENO);
+                        open(out, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR);
+                        close(STDERR_FILENO);
+                        open(err, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR);
+                    }
 
                     execv(args[0], args);
 
