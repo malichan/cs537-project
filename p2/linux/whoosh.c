@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -10,6 +11,8 @@
 
 const char* ERROR_MESSAGE = "An error has occurred";
 const char* DEFAULT_PATH = "/bin";
+const char* STDOUT_POSTFIX = ".out";
+const char* STDERR_POSTFIX = ".err";
 
 /* Utility Functions */
 
@@ -104,9 +107,9 @@ void clearPathList(int* npaths, char*** paths) {
 
 char* findExecutable(char* name, int npaths, char** paths) {
     static struct stat buffer;
-    if (stat(name, &buffer) == 0) {
-        return strdup(name);
-    }
+    // if (stat(name, &buffer) == 0) {
+    //     return strdup(name);
+    // }
     int i = 0;
     for (; i < npaths; ++i) {
         int length = strlen(name) + strlen(paths[i]) + 1;
@@ -120,6 +123,58 @@ char* findExecutable(char* name, int npaths, char** paths) {
         free(filename);
     }
     return NULL;
+}
+
+int createRedirection(int nargs, char** args, char** out, char** err) {
+    int i = 0;
+    int index = 0;
+    int count = 0;
+    for (; i < nargs; ++i) {
+        if (strcmp(args[i], ">") == 0) {
+            index = i;
+            ++count;
+        }
+    }
+    if (count == 0) {
+        return 0;
+    } else if (count > 1 || index != nargs - 2) {
+        return -1;
+    } else {
+        args[index] = NULL;
+
+        int length_out = strlen(args[index + 1]) + strlen(STDOUT_POSTFIX);
+        char* filename_out = (char*)malloc((length_out + 1) * sizeof(char));
+        strcpy(filename_out, args[index + 1]);
+        strcat(filename_out, STDOUT_POSTFIX);
+        int length_err = strlen(args[index + 1]) + strlen(STDERR_POSTFIX);
+        char* filename_err = (char*)malloc((length_err + 1) * sizeof(char));
+        strcpy(filename_err, args[index + 1]);
+        strcat(filename_err, STDERR_POSTFIX);
+
+        int fd_out = open(filename_out, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR);
+        int fd_err = open(filename_err, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR);
+        close(fd_out);
+        close(fd_err);
+
+        if (fd_out < 0 || fd_err < 0) {
+            return -1;
+        } else {
+            *out = filename_out;
+            *err = filename_err;
+            return 2;
+        }
+    }
+}
+
+void clearRedirection(char** out, char** err) {
+    if (*out != NULL) {
+        free(*out);
+    }
+    if (*err != NULL) {
+        free(*err);
+    }
+    *out = NULL;
+    *err = NULL;
 }
 
 /* Main Program */
@@ -136,6 +191,8 @@ int main(int argc, char* argv[]) {
     int npaths = 1;
     char** paths = (char**)malloc(sizeof(char*));
     paths[0] = strdup(DEFAULT_PATH);
+    char* out = NULL;
+    char* err = NULL;
 
     while (1) {
         printf("whoosh> ");
@@ -152,18 +209,18 @@ int main(int argc, char* argv[]) {
         createArgList(command_line, &nargs, &args);
 
         //----------------------------------------
-        // printf("* argc = %d\n", nargs);
-        // int i = 0;
-        // for (;i < nargs; ++i) {
-        //     printf("* argv[%d] = %s\n", i, args[i]);
-        // }
+        printf("* argc = %d\n", nargs);
+        int i = 0;
+        for (;i < nargs; ++i) {
+            printf("* argv[%d] = %s\n", i, args[i]);
+        }
         //----------------------------------------
 
         if (nargs > 0) {
             if (strcmp(args[0], "exit") == 0) {
                 clearPathList(&npaths, &paths);
                 clearArgList(&nargs, &args);
-                return 0;
+                exit(0);
             } else if (strcmp(args[0], "pwd") == 0) {
                 char* pwd = getcwd(NULL, 0);
                 printf("%s\n", pwd);
@@ -183,7 +240,8 @@ int main(int argc, char* argv[]) {
                 //     printf("* paths[%d] = %s\n", i, paths[i]);
                 // }
                 //----------------------------------------
-            } else if ((args[0] = findExecutable(args[0], npaths, paths)) != NULL) {
+            } else if (((args[0] = findExecutable(args[0], npaths, paths)) != NULL)
+                && (createRedirection(nargs, args, &out, &err) >= 0)) {
                 //----------------------------------------
                 // printf("* filename = %s\n", args[0]);
                 //----------------------------------------
@@ -193,12 +251,24 @@ int main(int argc, char* argv[]) {
                         fprintf(stderr, "%s\n", ERROR_MESSAGE);
                     }
                 } else if (pid == 0) {
+                    close(STDOUT_FILENO);
+                    open(out, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR);
+                    close(STDERR_FILENO);
+                    open(err, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR);
+
                     execv(args[0], args);
+
                     fprintf(stderr, "%s\n", ERROR_MESSAGE);
+                    free(args[0]);
+                    clearRedirection(&out, &err);
+                    clearPathList(&npaths, &paths);
+                    clearArgList(&nargs, &args);
+                    exit(1);
                 } else {
                     fprintf(stderr, "%s\n", ERROR_MESSAGE);
                 }
                 free(args[0]);
+                clearRedirection(&out, &err);
             } else {
                 fprintf(stderr, "%s\n", ERROR_MESSAGE);
             }
