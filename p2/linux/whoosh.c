@@ -7,14 +7,10 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-/* Constants */
-
 const char* ERROR_MESSAGE = "An error has occurred";
 const char* DEFAULT_PATH = "/bin";
 const char* STDOUT_POSTFIX = ".out";
 const char* STDERR_POSTFIX = ".err";
-
-/* Utility Functions */
 
 char* getLine128() {
     static char buffer[130];
@@ -107,9 +103,6 @@ void clearPathList(int* npaths, char*** paths) {
 
 char* findExecutable(char* name, int npaths, char** paths) {
     static struct stat buffer;
-    // if (stat(name, &buffer) == 0) {
-    //     return strdup(name);
-    // }
     int i = 0;
     for (; i < npaths; ++i) {
         int length = strlen(name) + strlen(paths[i]) + 1;
@@ -177,8 +170,6 @@ void clearRedirection(char** out, char** err) {
     *err = NULL;
 }
 
-/* Main Program */
-
 int main(int argc, char* argv[]) {
     if (argc != 1) {
         fprintf(stderr, "%s\n", ERROR_MESSAGE);
@@ -202,19 +193,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        //----------------------------------------
-        // printf("* command line = %s\n", command_line);
-        //----------------------------------------
-
         createArgList(command_line, &nargs, &args);
-
-        //----------------------------------------
-        // printf("* argc = %d\n", nargs);
-        // int i = 0;
-        // for (;i < nargs; ++i) {
-        //     printf("* argv[%d] = %s\n", i, args[i]);
-        // }
-        //----------------------------------------
 
         if (nargs > 0) {
             if (strcmp(args[0], "exit") == 0) {
@@ -233,18 +212,8 @@ int main(int argc, char* argv[]) {
             } else if (strcmp(args[0], "path") == 0) {
                 clearPathList(&npaths, &paths);
                 createPathList(nargs, args, &npaths, &paths);
-                //----------------------------------------
-                // printf("* #paths = %d\n", npaths);
-                // int i = 0;
-                // for (;i < npaths; ++i) {
-                //     printf("* paths[%d] = %s\n", i, paths[i]);
-                // }
-                //----------------------------------------
             } else if (((args[0] = findExecutable(args[0], npaths, paths)) != NULL)
                 && (createRedirection(nargs, args, &out, &err) >= 0)) {
-                //----------------------------------------
-                // printf("* filename = %s\n", args[0]);
-                //----------------------------------------
                 int pid = fork();
                 if (pid > 0) {
                     if (wait(NULL) != pid) {
