@@ -1,0 +1,8 @@
+CS 537 Project 2 - Processes and Scheduling
+Ke Ma
+
+2a) The Unix Shell
+Implemented a command line interpreter (shell), which operates in a basic way, has built-in commands such as exit, cd, pwd and path, and is able to redirect standard output / standard error to text files.
+
+2b) xv6 Scheduler
+Replaced the xv6 scheduler with a simple priority-based scheduler, which assigns each running process a priority, only runs processes that have the high priority, and round-robin between them if there are multiple such processes.
