@@ -48,6 +48,7 @@ mainc(void)
   consoleinit();   // I/O devices & their interrupts
   uartinit();      // serial port
   kvmalloc();      // initialize the kernel page table
+  shmeminit();     // initialize shared memory
   pinit();         // process table
   tvinit();        // trap vectors
   binit();         // buffer cache

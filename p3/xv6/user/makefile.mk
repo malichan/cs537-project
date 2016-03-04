@@ -18,7 +18,9 @@ USER_PROGS := \
 	wc\
 	zombie\
 	nullptr\
-	nullptrsys
+	nullptrsys\
+	shmem\
+	shmemexec
 
 USER_PROGS := $(addprefix user/, $(USER_PROGS))
 

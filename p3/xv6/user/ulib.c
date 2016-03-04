@@ -5,7 +5,7 @@
 #include "x86.h"
 
 char*
-strcpy(char *s, char *t)
+strcpy(char *s, const char *t)
 {
   char *os;
 

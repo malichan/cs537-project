@@ -74,6 +74,8 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  uint shmem[SHMEMPGNO];       // Shmem mapped into virtual memory space
+  uint shmembd;                // Bound of mapped shmem pages
 };
 
 // Process memory is laid out contiguously, low addresses first:

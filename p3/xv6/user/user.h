@@ -25,10 +25,12 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+void* shmem_access(int);
+int shmem_count(int);
 
 // user library functions (ulib.c)
 int stat(char*, struct stat*);
-char* strcpy(char*, char*);
+char* strcpy(char*, const char*);
 void *memmove(void*, void*, int);
 char* strchr(const char*, char c);
 int strcmp(const char*, const char*);

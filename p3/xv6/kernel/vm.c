@@ -9,6 +9,8 @@
 extern char data[];  // defined in data.S
 
 static pde_t *kpgdir;  // for use in scheduler()
+static uint shmem[SHMEMPGNO];  // shared memory pages
+static uint shmemusr[SHMEMPGNO];  // num of shmem users
 
 // Allocate one page table for the machine for the kernel address
 // space for scheduler processes.
@@ -226,12 +228,12 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
 // Allocate page tables and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 int
-allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
+allocuvm(pde_t *pgdir, uint oldsz, uint newsz, uint shmembd)
 {
   char *mem;
   uint a;
 
-  if(newsz > USERTOP)
+  if(newsz > shmembd)
     return 0;
   if(newsz < oldsz)
     return oldsz;
@@ -299,7 +301,7 @@ freevm(pde_t *pgdir)
 // Given a parent process's page table, create a copy
 // of it for a child.
 pde_t*
-copyuvm(pde_t *pgdir, uint sz)
+copyuvm(pde_t *pgdir, uint sz, uint shmembd)
 {
   pde_t *d;
   pte_t *pte;
@@ -318,6 +320,15 @@ copyuvm(pde_t *pgdir, uint sz)
       goto bad;
     memmove(mem, (char*)pa, PGSIZE);
     if(mappages(d, (void*)i, PGSIZE, PADDR(mem), PTE_W|PTE_U) < 0)
+      goto bad;
+  }
+  for(i = shmembd; i < USERTOP; i += PGSIZE){
+    if((pte = walkpgdir(pgdir, (void*)i, 0)) == 0)
+      panic("copyuvm: pte should exist");
+    if(!(*pte & PTE_P))
+      panic("copyuvm: page not present");
+    pa = PTE_ADDR(*pte);
+    if(mappages(d, (void*)i, PGSIZE, pa, PTE_W|PTE_U) < 0)
       goto bad;
   }
   return d;
@@ -366,3 +377,65 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   }
   return 0;
 }
+
+void
+shmeminit(void)
+{
+  uint i;
+  char* mem;
+  
+  for(i = 0; i < SHMEMPGNO; i++){
+    mem = kalloc();
+    memset(mem, 0, PGSIZE);
+    shmem[i] = PADDR(mem);
+    shmemusr[i] = 0;
+  }
+}
+
+uint
+shmemget(uint n)
+{
+  uint addr;
+
+  if(n >= SHMEMPGNO)
+    return 0;
+  else if(proc->shmem[n] != 0)
+    return proc->shmem[n];
+  else{
+    addr = proc->shmembd - PGSIZE;
+    if(addr < proc->sz)
+      return 0;
+    mappages(proc->pgdir, (char*)addr, PGSIZE, shmem[n], PTE_W|PTE_U);
+    proc->shmem[n] = addr;
+    proc->shmembd = addr;
+    shmemusr[n]++;
+    return addr;
+  }
+}
+
+int
+shmemcnt(uint n)
+{
+  if(n >= SHMEMPGNO)
+    return -1;
+  else
+    return (int)shmemusr[n];
+}
+
+void
+shmemcntinc(uint n)
+{
+  if(n >= SHMEMPGNO)
+    return;
+  else
+    shmemusr[n]++;
+}
+
+void
+shmemcntdec(uint n)
+{
+  if(n >= SHMEMPGNO)
+    return;
+  else 
+    shmemusr[n]--;
+} 

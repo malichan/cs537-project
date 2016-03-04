@@ -68,6 +68,8 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
+  p->shmembd = USERTOP;
+
   return p;
 }
 
@@ -110,7 +112,7 @@ growproc(int n)
   
   sz = proc->sz;
   if(n > 0){
-    if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0)
+    if((sz = allocuvm(proc->pgdir, sz, sz + n, proc->shmembd)) == 0)
       return -1;
   } else if(n < 0){
     if((sz = deallocuvm(proc->pgdir, sz, sz + n)) == 0)
@@ -135,7 +137,7 @@ fork(void)
     return -1;
 
   // Copy process state from p.
-  if((np->pgdir = copyuvm(proc->pgdir, proc->sz)) == 0){
+  if((np->pgdir = copyuvm(proc->pgdir, proc->sz, proc->shmembd)) == 0){
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
@@ -156,6 +158,14 @@ fork(void)
   pid = np->pid;
   np->state = RUNNABLE;
   safestrcpy(np->name, proc->name, sizeof(proc->name));
+
+  for(i = 0; i < SHMEMPGNO; i++)
+    if(proc->shmem[i] > 0) {
+      np->shmem[i] = proc->shmem[i];
+      shmemcntinc(i);
+    }
+  np->shmembd = proc->shmembd;
+
   return pid;
 }
 
@@ -209,6 +219,7 @@ wait(void)
 {
   struct proc *p;
   int havekids, pid;
+  uint i;
 
   acquire(&ptable.lock);
   for(;;){
@@ -224,6 +235,12 @@ wait(void)
         kfree(p->kstack);
         p->kstack = 0;
         freevm(p->pgdir);
+        for(i = 0; i < SHMEMPGNO; i++)
+          if(p->shmem[i] > 0) {
+            p->shmem[i] = 0;
+            shmemcntdec(i);
+          }
+        p->shmembd = USERTOP;
         p->state = UNUSED;
         p->pid = 0;
         p->parent = 0;
@@ -442,5 +459,3 @@ procdump(void)
     cprintf("\n");
   }
 }
-
-

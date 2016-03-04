@@ -40,7 +40,7 @@ exec(char *path, char **argv)
       continue;
     if(ph.memsz < ph.filesz)
       goto bad;
-    if((sz = allocuvm(pgdir, sz, ph.va + ph.memsz)) == 0)
+    if((sz = allocuvm(pgdir, sz, ph.va + ph.memsz, USERTOP)) == 0)
       goto bad;
     if(loaduvm(pgdir, (char*)ph.va, ip, ph.offset, ph.filesz) < 0)
       goto bad;
@@ -50,7 +50,7 @@ exec(char *path, char **argv)
 
   // Allocate a one-page stack at the next page boundary
   sz = PGROUNDUP(sz);
-  if((sz = allocuvm(pgdir, sz, sz + PGSIZE)) == 0)
+  if((sz = allocuvm(pgdir, sz, sz + PGSIZE, USERTOP)) == 0)
     goto bad;
 
   // Push argument strings, prepare rest of stack in ustack.
@@ -88,6 +88,13 @@ exec(char *path, char **argv)
   proc->tf->esp = sp;
   switchuvm(proc);
   freevm(oldpgdir);
+
+  for(i = 0; i < SHMEMPGNO; i++)
+    if(proc->shmem[i] != 0){
+      proc->shmem[i] = 0;
+      shmemcntdec(i);
+    }
+  proc->shmembd = USERTOP;
 
   return 0;
 
