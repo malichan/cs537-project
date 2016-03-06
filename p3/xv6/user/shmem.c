@@ -21,7 +21,7 @@ main(int argc, char *argv[])
   printf(1, "0x%x: %d [expected = 0x9F000: 333]\n", ptr3, *ptr3);
   printf(1, "test access invalid shared page 4\n");
   int* ptr4 = (int*)shmem_access(4);
-  printf(1, "0x%x [expected = 0xFFFFFFFF]\n", ptr4);
+  printf(1, "0x%x [expected = 0x0]\n", ptr4);
 
   printf(1, "test count users of valid shared pages\n");
   for(i = 0; i < 4; i++)

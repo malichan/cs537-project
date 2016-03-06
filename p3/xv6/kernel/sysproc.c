@@ -93,14 +93,11 @@ int
 sys_shmem_access(void)
 {
   int n;
-  uint addr;
   
   if(argint(0, &n) < 0)
-    return -1;
-  if((addr = shmemget((uint)n)) == 0)
-    return -1;
+    return 0;
 
-  return addr;
+  return shmemget((uint)n);
 }
 
 int
