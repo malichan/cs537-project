@@ -270,7 +270,7 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
   a = PGROUNDUP(newsz);
   for(; a  < oldsz; a += PGSIZE){
     pte = walkpgdir(pgdir, (char*)a, 0);
-    if(pte && (*pte & PTE_P) != 0){
+    if(pte && (*pte & PTE_P) != 0 && (*pte & PTE_S) == 0){
       pa = PTE_ADDR(*pte);
       if(pa == 0)
         panic("kfree");
@@ -290,7 +290,7 @@ freevm(pde_t *pgdir)
 
   if(pgdir == 0)
     panic("freevm: no pgdir");
-  deallocuvm(pgdir, USERTOP, 0);
+  deallocuvm(pgdir, USERTOP, PGSIZE);
   for(i = 0; i < NPDENTRIES; i++){
     if(pgdir[i] & PTE_P)
       kfree((char*)PTE_ADDR(pgdir[i]));
@@ -328,7 +328,7 @@ copyuvm(pde_t *pgdir, uint sz, uint shmembd)
     if(!(*pte & PTE_P))
       panic("copyuvm: page not present");
     pa = PTE_ADDR(*pte);
-    if(mappages(d, (void*)i, PGSIZE, pa, PTE_W|PTE_U) < 0)
+    if(mappages(d, (void*)i, PGSIZE, pa, PTE_W|PTE_U|PTE_S) < 0)
       goto bad;
   }
   return d;
@@ -405,7 +405,7 @@ shmemget(uint n)
     addr = proc->shmembd - PGSIZE;
     if(addr < proc->sz)
       return 0;
-    mappages(proc->pgdir, (char*)addr, PGSIZE, shmem[n], PTE_W|PTE_U);
+    mappages(proc->pgdir, (char*)addr, PGSIZE, shmem[n], PTE_W|PTE_U|PTE_S);
     proc->shmem[n] = addr;
     proc->shmembd = addr;
     shmemusr[n]++;

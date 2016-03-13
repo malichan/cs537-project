@@ -133,8 +133,9 @@ struct segdesc {
 #define PTE_PCD		0x010	// Cache-Disable
 #define PTE_A		0x020	// Accessed
 #define PTE_D		0x040	// Dirty
+#define PTE_S           0x080   // Shared
 #define PTE_PS		0x080	// Page Size
-#define PTE_MBZ		0x180	// Bits must be zero
+#define PTE_MBZ		0x100	// Bits must be zero
 
 // Address in page table or page directory entry
 #define PTE_ADDR(pte)	((uint)(pte) & ~0xFFF)

@@ -1,0 +1,6 @@
+CS 537 Project 3 - Memory Management
+Ke Ma
+
+3b) The Null Pointer and Shared Memory
+1) Null-pointer Dereference: Made the first page of every process invalid, so that dereferencing a null pointer would generate an exception. Also fixed all relevant bound checks.
+2) Shared Pages: Implemented two system calls shmem_access and shmem_count to provide 4 physical pages that can be shared among processes, and to check how many processes are sharing the pages.
