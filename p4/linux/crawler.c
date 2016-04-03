@@ -3,10 +3,6 @@
 #include <pthread.h>
 #include <string.h>
 
-#include <stdio.h>
-// #include <stdint.h>
-// #include <unistd.h>
-
 // *************************
 //      memory routines
 // *************************
@@ -86,6 +82,11 @@ void cond_signal(cond_t *c) {
     assert(rc == 0);
 }
 
+void cond_broadcast(cond_t *c) {
+    int rc = pthread_cond_broadcast(c);
+    assert(rc == 0);
+}
+
 void cond_destroy(cond_t *c) {
     int rc = pthread_cond_destroy(c);
     assert(rc == 0);
@@ -104,6 +105,9 @@ typedef struct __bounded_buffer_t {
     mutex_t mutex;
     cond_t empty;
     cond_t fill;
+    int done;
+    size_t workers;
+    mutex_t worker_mutex;
 } bounded_buffer_t;
 
 void bounded_buffer_init(bounded_buffer_t *b, size_t size) {
@@ -115,6 +119,9 @@ void bounded_buffer_init(bounded_buffer_t *b, size_t size) {
     mutex_init(&b->mutex);
     cond_init(&b->empty);
     cond_init(&b->fill);
+    b->done = 0;
+    b->workers = 0;
+    mutex_init(&b->worker_mutex);
 }
 
 void bounded_buffer_put(bounded_buffer_t *b, void* ptr) {
@@ -130,8 +137,16 @@ void bounded_buffer_put(bounded_buffer_t *b, void* ptr) {
 
 void *bounded_buffer_get(bounded_buffer_t *b) {
     mutex_lock(&b->mutex);
-    while (b->count == 0)
+    while (b->count == 0) {
+        if (b->done != 0) {
+            mutex_unlock(&b->mutex);
+            return NULL;
+        }
         cond_wait(&b->fill, &b->mutex);
+    }
+    mutex_lock(&b->worker_mutex);
+    b->workers++;
+    mutex_unlock(&b->worker_mutex);
     void *ptr = b->buffer[b->head];
     b->buffer[b->head] = NULL;
     b->head = (b->head + 1) % b->size;
@@ -148,6 +163,12 @@ void bounded_buffer_destroy(bounded_buffer_t *b) {
     cond_destroy(&b->fill);
 }
 
+void bounded_buffer_done(bounded_buffer_t *b) {
+    mutex_lock(&b->worker_mutex);
+    b->workers--;
+    mutex_unlock(&b->worker_mutex);
+}
+
 // *************************
 //      unbounded buffer
 // *************************
@@ -161,10 +182,13 @@ typedef struct __unbounded_buffer_t {
     node_t *head;
     node_t *tail;
     size_t count;
+    mutex_t mutex;
     mutex_t head_mutex;
     mutex_t tail_mutex;
-    mutex_t count_mutex;
     cond_t fill;
+    int done;
+    size_t workers;
+    mutex_t worker_mutex;
 } unbounded_buffer_t;
 
 void unbounded_buffer_init(unbounded_buffer_t *b) {
@@ -174,10 +198,13 @@ void unbounded_buffer_init(unbounded_buffer_t *b) {
     b->head = node;
     b->tail = node;
     b->count = 0;
+    mutex_init(&b->mutex);
     mutex_init(&b->head_mutex);
     mutex_init(&b->tail_mutex);
-    mutex_init(&b->count_mutex);
     cond_init(&b->fill);
+    b->done = 0;
+    b->workers = 0;
+    mutex_init(&b->worker_mutex);
 }
 
 void unbounded_buffer_put(unbounded_buffer_t *b, void *ptr) {
@@ -187,20 +214,28 @@ void unbounded_buffer_put(unbounded_buffer_t *b, void *ptr) {
     mutex_lock(&b->tail_mutex);
     b->tail->next = node;
     b->tail = node;
-    mutex_lock(&b->count_mutex);
+    mutex_lock(&b->mutex);
     mutex_unlock(&b->tail_mutex);
     b->count++;
     cond_signal(&b->fill);
-    mutex_unlock(&b->count_mutex);
+    mutex_unlock(&b->mutex);
 }
 
 void *unbounded_buffer_get(unbounded_buffer_t *b) {
-    mutex_lock(&b->count_mutex);
-    while (b->count == 0)
-        cond_wait(&b->fill, &b->count_mutex);
+    mutex_lock(&b->mutex);
+    while (b->count == 0) {
+        if (b->done != 0) {
+            mutex_unlock(&b->mutex);
+            return 0;
+        }
+        cond_wait(&b->fill, &b->mutex);
+    }
     b->count--;
+    mutex_lock(&b->worker_mutex);
+    mutex_unlock(&b->mutex);
+    b->workers++;
+    mutex_unlock(&b->worker_mutex);
     mutex_lock(&b->head_mutex);
-    mutex_unlock(&b->count_mutex);
     node_t *old_node = b->head;
     node_t *node = old_node->next;
     void *ptr = node->ptr;
@@ -218,10 +253,16 @@ void unbounded_buffer_destroy(unbounded_buffer_t *b) {
         node = old_node->next;
         mem_free(old_node);
     }
+    mutex_destroy(&b->mutex);
     mutex_destroy(&b->head_mutex);
     mutex_destroy(&b->tail_mutex);
-    mutex_destroy(&b->count_mutex);
     cond_destroy(&b->fill);
+}
+
+void unbounded_buffer_done(unbounded_buffer_t *b) {
+    mutex_lock(&b->worker_mutex);
+    b->workers--;
+    mutex_unlock(&b->worker_mutex);
 }
 
 // *************************
@@ -312,6 +353,8 @@ struct input_args {
     hashset_t *url_set;
     char *(*fetch)(char *url);
     void (*edge)(char *from, char *to);
+    mutex_t *done_mutex;
+    cond_t *done_cond;
 };
 
 struct page {
@@ -323,6 +366,8 @@ void *downloader(void *arg) {
     struct input_args *in_args = (struct input_args *)arg;
     while (1) {
         char *url = (char *)bounded_buffer_get(in_args->url_queue);
+        if (url == NULL)
+            break;
         if (hashset_contains(in_args->url_set, url) == 0) {
             hashset_insert(in_args->url_set, url);
             char *content = in_args->fetch(url);
@@ -334,31 +379,49 @@ void *downloader(void *arg) {
         } else {
             mem_free(url);
         }
+        bounded_buffer_done(in_args->url_queue);
+        mutex_lock(in_args->done_mutex);
+        cond_signal(in_args->done_cond);
+        mutex_unlock(in_args->done_mutex);
     }
+    return NULL;
 }
 
 void *parser(void *arg) {
     struct input_args *in_args = (struct input_args *)arg;
     while (1) {
         struct page *page = (struct page *)unbounded_buffer_get(in_args->page_queue);
-
+        if (page == NULL)
+            break;
         char *start = page->content;
         while ((start = strstr(start, "link:")) != NULL) {
-            char *end = start;
+            char *end = start + 5;
             while (*end != ' ' && *end != '\n' && *end != '\0')
                 end++;
-            char tmp = *end;
-            *end = '\0';
-            char *url = str_duplicate(start + 5);
-            in_args->edge(page->url, url);
-            bounded_buffer_put(in_args->url_queue, (void *)url);
-            *end = tmp;
-            start = end + 1;
+            if (*end == '\0') {
+                char *url = str_duplicate(start + 5);
+                in_args->edge(page->url, url);
+                bounded_buffer_put(in_args->url_queue, (void *)url);
+                break;
+            } else {
+                char tmp = *end;
+                *end = '\0';
+                char *url = str_duplicate(start + 5);
+                in_args->edge(page->url, url);
+                bounded_buffer_put(in_args->url_queue, (void *)url);
+                *end = tmp;
+                start = end + 1;
+            }
         }
         mem_free(page->url);
         mem_free(page->content);
         mem_free(page);
+        unbounded_buffer_done(in_args->page_queue);
+        mutex_lock(in_args->done_mutex);
+        cond_signal(in_args->done_cond);
+        mutex_unlock(in_args->done_mutex);
     }
+    return NULL;
 }
 
 int crawl(char *start_url, int download_workers, int parse_workers, int queue_size,
@@ -374,12 +437,20 @@ int crawl(char *start_url, int download_workers, int parse_workers, int queue_si
 
     bounded_buffer_put(&url_queue, (void *)str_duplicate(start_url));
 
+    mutex_t done_mutex;
+    cond_t done_cond;
+
+    mutex_init(&done_mutex);
+    cond_init(&done_cond);
+
     struct input_args in_args;
     in_args.url_queue = &url_queue;
     in_args.page_queue = &page_queue;
     in_args.url_set = &url_set;
     in_args.fetch = _fetch_fn;
     in_args.edge = _edge_fn;
+    in_args.done_mutex = &done_mutex;
+    in_args.done_cond = &done_cond;
 
     thread_t downloaders[download_workers];
     thread_t parsers[parse_workers];
@@ -387,6 +458,35 @@ int crawl(char *start_url, int download_workers, int parse_workers, int queue_si
         thread_create(&downloaders[i], downloader, (void *)&in_args);
     for (i = 0; i < parse_workers; i++)
         thread_create(&parsers[i], parser, (void *)&in_args);
+
+    while (1) {
+        mutex_lock(&done_mutex);
+        mutex_lock(&url_queue.mutex);
+        mutex_lock(&url_queue.worker_mutex);
+        mutex_lock(&page_queue.mutex);
+        mutex_lock(&page_queue.worker_mutex);
+        if (url_queue.count == 0 && url_queue.workers == 0 &&
+            page_queue.count == 0 && page_queue.workers == 0) {
+            url_queue.done = 1;
+            page_queue.done = 1;
+            cond_broadcast(&url_queue.empty);
+            cond_broadcast(&url_queue.fill);
+            cond_broadcast(&page_queue.fill);
+            mutex_unlock(&url_queue.mutex);
+            mutex_unlock(&url_queue.worker_mutex);
+            mutex_unlock(&page_queue.mutex);
+            mutex_unlock(&page_queue.worker_mutex);
+            mutex_unlock(&done_mutex);
+            break;
+        } else {
+            mutex_unlock(&url_queue.mutex);
+            mutex_unlock(&url_queue.worker_mutex);
+            mutex_unlock(&page_queue.mutex);
+            mutex_unlock(&page_queue.worker_mutex);
+            cond_wait(&done_cond, &done_mutex);
+            mutex_unlock(&done_mutex);
+        }
+    }
 
     for (i = 0; i < download_workers; i++)
         thread_join(downloaders[i], NULL);
@@ -397,5 +497,5 @@ int crawl(char *start_url, int download_workers, int parse_workers, int queue_si
     unbounded_buffer_destroy(&page_queue);
     hashset_destroy(&url_set);
 
-    return -1;
+    return 0;
 }
