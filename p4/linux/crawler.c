@@ -1,8 +1,9 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <pthread.h>
-// #include <stdio.h>
-// #include <string.h>
+#include <string.h>
+
+#include <stdio.h>
 // #include <stdint.h>
 // #include <unistd.h>
 
@@ -24,6 +25,12 @@ void *mem_calloc(size_t count, size_t size) {
 
 void mem_free(void *ptr) {
     free(ptr);
+}
+
+char *str_duplicate(char *str) {
+    char *str_new = strdup(str);
+    assert(str_new != NULL);
+    return str_new;
 }
 
 // *************************
@@ -218,50 +225,58 @@ void unbounded_buffer_destroy(unbounded_buffer_t *b) {
 }
 
 // *************************
-//      concurrent hash set
+//      string hash set
 // *************************
 
 typedef struct __hashset_t {
     node_t **heads;
     mutex_t *mutexes;
     size_t buckets;
-    size_t (*hash)(void *ptr);
 } hashset_t;
 
-void hashset_init(hashset_t *h, size_t buckets, size_t (*hash)(void *ptr)) {
+size_t hashset_hash(char *str) {
+    size_t hash = 0;
+    char *c = str;
+    while (*c != '\0') {
+        hash = (size_t)*c + 31 * hash;
+        c++;
+    }
+    return hash;
+}
+
+void hashset_init(hashset_t *h, size_t buckets) {
     h->heads = mem_calloc(buckets, sizeof(node_t *));
     h->mutexes = mem_calloc(buckets, sizeof(mutex_t));
     h->buckets = buckets;
-    h->hash = hash;
     int i = 0;
-    for (; i < buckets; ++i)
+    for (; i < buckets; i++)
         mutex_init(&h->mutexes[i]);
 }
 
-void hashset_insert(hashset_t *h, void *ptr) {
-    size_t bucket = h->hash(ptr) % h->buckets;
+void hashset_insert(hashset_t *h, char *str) {
+    size_t bucket = hashset_hash(str) % h->buckets;
     mutex_lock(&h->mutexes[bucket]);
     node_t *node = h->heads[bucket];
     while (node != NULL) {
-        if (node->ptr == ptr)
+        if (strcmp((char *)node->ptr, str) == 0)
             break;
         node = node->next;
     }
     if (node == NULL) {
         node = (node_t *)mem_malloc(sizeof(node_t));
-        node->ptr = ptr;
+        node->ptr = (void *)str_duplicate(str);
         node->next = h->heads[bucket];
         h->heads[bucket] = node;
     }
     mutex_unlock(&h->mutexes[bucket]);
 }
 
-int hashset_contains(hashset_t *h, void *ptr) {
-    size_t bucket = h->hash(ptr) % h->buckets;
+int hashset_contains(hashset_t *h, char *str) {
+    size_t bucket = hashset_hash(str) % h->buckets;
     mutex_lock(&h->mutexes[bucket]);
     node_t *node = h->heads[bucket];
     while (node != NULL) {
-        if (node->ptr == ptr)
+        if (strcmp((char *)node->ptr, str) == 0)
             break;
         node = node->next;
     }
@@ -271,11 +286,12 @@ int hashset_contains(hashset_t *h, void *ptr) {
 
 void hashset_destroy(hashset_t *h) {
     int i = 0;
-    for (; i < h->buckets; ++i) {
+    for (; i < h->buckets; i++) {
         node_t *node = h->heads[i];
         while (node != NULL) {
             node_t *old_node = node;
             node = old_node->next;
+            mem_free(old_node->ptr);
             mem_free(old_node);
         }
         mutex_destroy(&h->mutexes[i]);
@@ -285,10 +301,101 @@ void hashset_destroy(hashset_t *h) {
 }
 
 // *************************
-//      main function
+//      main functions
 // *************************
+
+const size_t HASHSET_BUCKETS = 97;
+
+struct input_args {
+    bounded_buffer_t *url_queue;
+    unbounded_buffer_t *page_queue;
+    hashset_t *url_set;
+    char *(*fetch)(char *url);
+    void (*edge)(char *from, char *to);
+};
+
+struct page {
+    char *url;
+    char *content;
+};
+
+void *downloader(void *arg) {
+    struct input_args *in_args = (struct input_args *)arg;
+    while (1) {
+        char *url = (char *)bounded_buffer_get(in_args->url_queue);
+        if (hashset_contains(in_args->url_set, url) == 0) {
+            hashset_insert(in_args->url_set, url);
+            char *content = in_args->fetch(url);
+            assert(content != NULL);
+            struct page *page = (struct page *)mem_malloc(sizeof(struct page));
+            page->url = url;
+            page->content = content;
+            unbounded_buffer_put(in_args->page_queue, (void *)page);
+        } else {
+            mem_free(url);
+        }
+    }
+}
+
+void *parser(void *arg) {
+    struct input_args *in_args = (struct input_args *)arg;
+    while (1) {
+        struct page *page = (struct page *)unbounded_buffer_get(in_args->page_queue);
+
+        char *start = page->content;
+        while ((start = strstr(start, "link:")) != NULL) {
+            char *end = start;
+            while (*end != ' ' && *end != '\n' && *end != '\0')
+                end++;
+            char tmp = *end;
+            *end = '\0';
+            char *url = str_duplicate(start + 5);
+            in_args->edge(page->url, url);
+            bounded_buffer_put(in_args->url_queue, (void *)url);
+            *end = tmp;
+            start = end + 1;
+        }
+        mem_free(page->url);
+        mem_free(page->content);
+        mem_free(page);
+    }
+}
 
 int crawl(char *start_url, int download_workers, int parse_workers, int queue_size,
     char *(*_fetch_fn)(char *url), void (*_edge_fn)(char *from, char *to)) {
-  return -1;
+    int i;
+
+    bounded_buffer_t url_queue;
+    unbounded_buffer_t page_queue;
+    hashset_t url_set;
+    bounded_buffer_init(&url_queue, queue_size);
+    unbounded_buffer_init(&page_queue);
+    hashset_init(&url_set, HASHSET_BUCKETS);
+
+    bounded_buffer_put(&url_queue, (void *)str_duplicate(start_url));
+
+    struct input_args in_args;
+    in_args.url_queue = &url_queue;
+    in_args.page_queue = &page_queue;
+    in_args.url_set = &url_set;
+    in_args.fetch = _fetch_fn;
+    in_args.edge = _edge_fn;
+
+    thread_t downloaders[download_workers];
+    thread_t parsers[parse_workers];
+    for (i = 0; i < download_workers; i++)
+        thread_create(&downloaders[i], downloader, (void *)&in_args);
+    for (i = 0; i < parse_workers; i++)
+        thread_create(&parsers[i], parser, (void *)&in_args);
+
+    for (i = 0; i < download_workers; i++)
+        thread_join(downloaders[i], NULL);
+    for (i = 0; i < parse_workers; i++)
+        thread_join(parsers[i], NULL);
+
+    bounded_buffer_destroy(&url_queue);
+    unbounded_buffer_destroy(&page_queue);
+    hashset_destroy(&url_set);
+
+    return -1;
 }
