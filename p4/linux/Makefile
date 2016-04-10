@@ -14,3 +14,8 @@ libcrawler.so : crawler.c
 .PHONY: clean
 clean :
 	rm -f file_tester web_tester libcrawler.so *.o *.dSYM *~
+
+.PHONY: test
+test :
+	~cs537-1/ta/tests/4a/runtests -c
+	rm -f *.log

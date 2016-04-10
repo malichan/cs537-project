@@ -395,6 +395,10 @@ void *parser(void *arg) {
             break;
         char *start = page->content;
         while ((start = strstr(start, "link:")) != NULL) {
+            if (start > page->content && *(start - 1) != ' ' && *(start - 1) != '\n') {
+                start = start + 5;
+                continue;
+            }
             char *end = start + 5;
             while (*end != ' ' && *end != '\n' && *end != '\0')
                 end++;
