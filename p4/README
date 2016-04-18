@@ -1,0 +1,11 @@
+CS 537 Project 4 - Concurrency
+Ke Ma, Chang Wang
+
+4a) Scalable Web Crawler
+(Ke Ma)
+Implemented a multi-threaded web crawler library, which employs some downloaders that download pages from the Internet, and some parsers that parse the downloaded pages looking for links to unvisited pages.
+
+
+4b) xv6 Threads
+(Chang Wang)
+In this project, I added xv6 kernel threads. First, I implemented two system calls: clone() and join(). And I also modified some existing functions such as wait(), exit() and growproc(). At last I used clone() and join() to build a small thread library, with thread_create(), thread_join(), lock_init(), lock_acquire() and lock_release() functions.
