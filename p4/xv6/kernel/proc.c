@@ -117,6 +117,14 @@ growproc(int n)
       return -1;
   }
   proc->sz = sz;
+  
+  acquire(&ptable.lock);
+  struct proc *p;
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    if (p->parent == proc && p->pgdir == proc->pgdir)
+      p->sz = proc->sz;
+  release(&ptable.lock);
+
   switchuvm(proc);
   return 0;
 }
@@ -189,6 +197,8 @@ exit(void)
 
   // Pass abandoned children to init.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->parent == proc && p->pgdir == proc->pgdir)
+      proc->pgdir = copyuvm(p->pgdir, p->sz);
     if(p->parent == proc){
       p->parent = initproc;
       if(p->state == ZOMBIE)
@@ -215,7 +225,7 @@ wait(void)
     // Scan through table looking for zombie children.
     havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != proc)
+      if(p->parent != proc || p->pgdir == proc->pgdir)
         continue;
       havekids = 1;
       if(p->state == ZOMBIE){
@@ -443,4 +453,74 @@ procdump(void)
   }
 }
 
+int clone(void(*fcn)(void*), void *arg, void *stack)
+{
+	int i, pid;
+	struct proc *np;
 
+	if((np = allocproc()) == 0)
+		return -1;
+
+	np->pgdir = proc->pgdir;
+	np->sz = proc->sz;
+	np->parent = proc;
+	*np->tf = *proc->tf;
+	np->tf->eax = 0;
+	np->stack = stack;
+
+	void *stackSP = stack + PGSIZE - 2 * sizeof(void*);
+	*(uint*)stackSP = 0xffffffff;
+	stackSP += sizeof(void*);
+	*(uint*)stackSP = (uint)arg;
+
+	np->tf->esp = (uint)stackSP - sizeof(void*);
+	np->tf->eip = (uint)fcn;
+	
+	for(i = 0; i < NOFILE; i++)
+		if(proc->ofile[i])
+			np->ofile[i] = filedup(proc->ofile[i]);
+	np->cwd = idup(proc->cwd);
+  
+	pid = np->pid;
+	np->state = RUNNABLE;
+	safestrcpy(np->name, proc->name, sizeof(proc->name));
+	return pid;
+}
+
+int join(void **stack)
+{
+	struct proc *p;
+	int havekids, pid;
+
+	acquire(&ptable.lock);
+	for(;;)
+	{
+		havekids = 0;
+		for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+		{
+			if (p->parent != proc || proc->pgdir != p->pgdir)
+				continue;
+			havekids = 1;
+			if (p->state == ZOMBIE)
+			{
+				pid = p->pid;
+				kfree(p->kstack);
+				p->kstack = 0;
+				p->state = UNUSED;
+				p->pid = 0;
+				p->parent = 0;
+				p->name[0] = 0;
+				p->killed = 0;
+				*stack = p->stack;
+				release(&ptable.lock);
+				return pid;
+			}
+		}
+		if (havekids == 0 || proc->killed)
+		{
+			release(&ptable.lock);
+			return -1;
+		}
+		sleep(proc, &ptable.lock);
+	}
+}

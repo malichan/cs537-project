@@ -175,3 +175,8 @@ fs.img: tools/mkfs fs/README $(addprefix fs/,$(USER_BINS))
 
 .DEFAULT:
 	@echo "No rule to make target $@"
+
+.PHONY: test
+test :
+	~cs537-1/ta/tests/4b/runtests -c
+	rm -f *.log
