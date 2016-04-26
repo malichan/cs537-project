@@ -69,6 +69,41 @@ int main(int argc, char* argv[]) {
     }
     printf("\n");
 
+    // Read Directory Data
+    printf("Directory Data:\n");
+    for (uint i = 0; i < super_blk.ninodes; ++i) {
+        if (inode_tbl[i].type == T_DIR) {
+            printf("[%d]\n", i);
+            for (uint j = 0; j < NDIRECT; ++j) {
+                if (inode_tbl[i].addrs[j] != 0) {
+                    fseek(image, inode_tbl[i].addrs[j] * BSIZE, SEEK_SET);
+                    fread(buffer, 1, BSIZE, image);
+                    for (struct dirent* dir = (struct dirent*)buffer;
+                        dir < (struct dirent*)(buffer + BSIZE); ++dir) {
+                        if (dir->inum != 0)
+                            printf("%s: %d\n", dir->name, dir->inum);
+                    }
+                }
+            }
+            if (inode_tbl[i].addrs[NDIRECT] != 0) {
+                uint indirect_blk[NINDIRECT];
+                fseek(image, inode_tbl[i].addrs[NDIRECT] * BSIZE, SEEK_SET);
+                fread(indirect_blk, 1, BSIZE, image);
+                for (uint j = 0; j < NINDIRECT; ++j) {
+                    if (indirect_blk[j] != 0) {
+                        fseek(image, indirect_blk[j] * BSIZE, SEEK_SET);
+                        fread(buffer, 1, BSIZE, image);
+                        for (struct dirent* dir = (struct dirent*)buffer;
+                            dir < (struct dirent*)(buffer + BSIZE); ++dir) {
+                            if (dir->inum != 0)
+                                printf("%s: %d\n", dir->name, dir->inum);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fclose(image);
     return 0;
 }
