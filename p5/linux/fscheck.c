@@ -4,13 +4,21 @@
 
 #include "fs.h"
 
-uchar read_bit(uchar* bitmap, uint index) {
-    const uchar masks[8] = {0b00000001, 0b00000010, 0b00000100, 0b00001000,
-        0b00010000, 0b00100000, 0b01000000, 0b10000000};
+const uchar bit_masks[8] = {0b00000001, 0b00000010, 0b00000100, 0b00001000,
+    0b00010000, 0b00100000, 0b01000000, 0b10000000};
 
+uchar read_bit(uchar* bitmap, uint index) {
     uint location = index / 8;
     uint offset = index % 8;
-    return (bitmap[location] & masks[offset]) >> offset;
+    return (bitmap[location] & bit_masks[offset]) >> offset;
+}
+
+uchar test_and_set_bit(uchar* bitmap, uint index) {
+    uint location = index / 8;
+    uint offset = index % 8;
+    uchar old = (bitmap[location] & bit_masks[offset]) >> offset;
+    bitmap[location] |= bit_masks[offset];
+    return old;
 }
 
 int main(int argc, char* argv[]) {
@@ -37,18 +45,18 @@ int main(int argc, char* argv[]) {
     printf("\n");
 
     // Read Inode Table
-    struct dinode inode_tbl[super_blk.ninodes];
     uint inode_blks = (super_blk.ninodes + IPB - 1) / IPB;
+    struct dinode inode_tbl[inode_blks * IPB];
     for (uint i = 0; i < inode_blks; ++i) {
         fread(buffer, 1, BSIZE, image);
-        memcpy(&inode_tbl[IPB * i], buffer, IPB * (i + 1) <= super_blk.ninodes ?
-            BSIZE : (super_blk.ninodes - IPB * i) * sizeof(struct dinode));
+        memcpy(&inode_tbl[IPB * i], buffer, BSIZE);
     }
 
     printf("Inode Table:\n");
     for (uint i = 0; i < super_blk.ninodes; ++i) {
         if (inode_tbl[i].type != 0)
-            printf("[%d] type = %d, size = %d\n", i, inode_tbl[i].type, inode_tbl[i].size);
+            printf("[%d] type = %d, size = %d, nlinks = %d\n",
+                i, inode_tbl[i].type, inode_tbl[i].size, inode_tbl[i].nlink);
     }
     printf("\n");
 
@@ -56,10 +64,12 @@ int main(int argc, char* argv[]) {
     fseek(image, BSIZE, SEEK_CUR);
 
     // Read Data Bitmap
-    uint bitmap_size = (super_blk.size + 8 - 1) / 8;
-    uchar bitmap[bitmap_size];
-    fread(buffer, 1, BSIZE, image);
-    memcpy(bitmap, buffer, bitmap_size);
+    uint bitmap_blks = (super_blk.size + BPB - 1) / BPB;
+    uchar bitmap[bitmap_blks * BSIZE];
+    for (uint i = 0; i < bitmap_blks; ++i) {
+        fread(buffer, 1, BSIZE, image);
+        memcpy(bitmap, buffer, BSIZE);
+    }
 
     printf("Data Bitmap:\n");
     for (uint i = 0; i < super_blk.size; ++i) {
@@ -68,6 +78,81 @@ int main(int argc, char* argv[]) {
             printf("\n");
     }
     printf("\n");
+
+    // Initialize Reconstructed Data Bitmap
+    uchar bitmap_rec[bitmap_blks * BSIZE];
+    memset(bitmap_rec, 0, sizeof(bitmap_rec));
+    test_and_set_bit(bitmap_rec, 0);
+    test_and_set_bit(bitmap_rec, 1);
+    for (uint i = 0; i < inode_blks; ++i) {
+        test_and_set_bit(bitmap_rec, i + 2);
+    }
+    test_and_set_bit(bitmap_rec, inode_blks + 2);
+    for (uint i = 0; i < bitmap_blks; ++i) {
+        test_and_set_bit(bitmap_rec, i + inode_blks + 3);
+    }
+
+    // Check Inode Table
+    for (uint i = 0; i < super_blk.ninodes; ++i) {
+        if (inode_tbl[i].type == 0) {
+            continue;
+        } else if (inode_tbl[i].type > T_DEV) {
+            fprintf(stderr, "bad inode.\n");
+            exit(1);
+        } else {
+            if (i == 1 && inode_tbl[i].type != T_DIR) {
+                fprintf(stderr, "root directory does not exist.\n");
+                exit(1);
+            }
+            for (uint j = 0; j < NDIRECT; ++j) {
+                if (inode_tbl[i].addrs[j] == 0) {
+                    break;
+                } else if (inode_tbl[i].addrs[j] > super_blk.size) {
+                    fprintf(stderr, "bad address in inode.\n");
+                    exit(1);
+                } else if (test_and_set_bit(bitmap_rec, inode_tbl[i].addrs[j]) != 0) {
+                    fprintf(stderr, "address used more than once.\n");
+                    exit(1);
+                }
+            }
+            if (inode_tbl[i].addrs[NDIRECT] == 0) {
+            } else if (inode_tbl[i].addrs[NDIRECT] > super_blk.size) {
+                fprintf(stderr, "bad address in inode.\n");
+                exit(1);
+            } else if (test_and_set_bit(bitmap_rec, inode_tbl[i].addrs[NDIRECT]) != 0) {
+                fprintf(stderr, "address used more than once.\n");
+                exit(1);
+            } else {
+                uint indirect_blk[NINDIRECT];
+                fseek(image, inode_tbl[i].addrs[NDIRECT] * BSIZE, SEEK_SET);
+                fread(indirect_blk, 1, BSIZE, image);
+                for (uint j = 0; j < NINDIRECT; ++j) {
+                    if (indirect_blk[j] == 0) {
+                        break;
+                    } else if (indirect_blk[j] > super_blk.size) {
+                        fprintf(stderr, "bad address in inode.\n");
+                        exit(1);
+                    } else if (test_and_set_bit(bitmap_rec, indirect_blk[j]) != 0) {
+                        fprintf(stderr, "address used more than once.\n");
+                        exit(1);
+                    }
+                }
+            }
+        }   
+    }
+
+    // Compare Data Bitmap
+    for (uint i = 0; i < bitmap_blks * BSIZE; ++i) {
+        if (bitmap_rec[i] == bitmap[i]) {
+            continue;
+        } else if (bitmap_rec[i] > bitmap[i]) {
+            fprintf(stderr, "address used by inode but marked free in bitmap.\n");
+            exit(1);
+        } else {
+            fprintf(stderr, "bitmap marks block in use but it is not in use.\n");
+            exit(1);
+        }
+    }
 
     // Read Directory Data
     printf("Directory Data:\n");
