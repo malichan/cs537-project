@@ -6,7 +6,7 @@ fscheck : fscheck.c
 
 .PHONY: clean
 clean :
-	rm -f fscheck
+	rm -rf fscheck *.o *.dSYM
 
 .PHONY: test
 test :

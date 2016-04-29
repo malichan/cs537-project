@@ -7,15 +7,21 @@
 const uchar bit_masks[8] = {0b00000001, 0b00000010, 0b00000100, 0b00001000,
     0b00010000, 0b00100000, 0b01000000, 0b10000000};
 
-uchar read_bit(uchar* bitmap, uint index) {
-    uint location = index / 8;
-    uint offset = index % 8;
-    return (bitmap[location] & bit_masks[offset]) >> offset;
+// uchar read_bit(uchar* bitmap, uint index) {
+//     uint location = index >> 3;
+//     uint offset = index & 7;
+//     return (bitmap[location] & bit_masks[offset]) >> offset;
+// }
+
+void set_bit(uchar* bitmap, uint index) {
+    uint location = index >> 3;
+    uint offset = index & 7;
+    bitmap[location] |= bit_masks[offset];
 }
 
 uchar test_and_set_bit(uchar* bitmap, uint index) {
-    uint location = index / 8;
-    uint offset = index % 8;
+    uint location = index >> 3;
+    uint offset = index & 7;
     uchar old = (bitmap[location] & bit_masks[offset]) >> offset;
     bitmap[location] |= bit_masks[offset];
     return old;
@@ -38,11 +44,11 @@ int main(int argc, char* argv[]) {
     fread(buffer, 1, BSIZE, image);
     memcpy(&super_blk, buffer, sizeof(struct superblock));
 
-    printf("Superblock:\n");
-    printf("size = %d \n", super_blk.size);
-    printf("nblocks = %d \n", super_blk.nblocks);
-    printf("ninodes = %d \n", super_blk.ninodes);
-    printf("\n");
+    // printf("Superblock:\n");
+    // printf("size = %d \n", super_blk.size);
+    // printf("nblocks = %d \n", super_blk.nblocks);
+    // printf("ninodes = %d \n", super_blk.ninodes);
+    // printf("\n");
 
     // Read Inode Table
     uint inode_blks = (super_blk.ninodes + IPB - 1) / IPB;
@@ -52,13 +58,13 @@ int main(int argc, char* argv[]) {
         memcpy(&inode_tbl[IPB * i], buffer, BSIZE);
     }
 
-    printf("Inode Table:\n");
-    for (uint i = 0; i < super_blk.ninodes; ++i) {
-        if (inode_tbl[i].type != 0)
-            printf("[%d] type = %d, size = %d, nlinks = %d\n",
-                i, inode_tbl[i].type, inode_tbl[i].size, inode_tbl[i].nlink);
-    }
-    printf("\n");
+    // printf("Inode Table:\n");
+    // for (uint i = 0; i < super_blk.ninodes; ++i) {
+    //     if (inode_tbl[i].type != 0)
+    //         printf("[%d] type = %d, size = %d, nlink = %d\n",
+    //             i, inode_tbl[i].type, inode_tbl[i].size, inode_tbl[i].nlink);
+    // }
+    // printf("\n");
 
     // Skip Empty Block
     fseek(image, BSIZE, SEEK_CUR);
@@ -71,28 +77,72 @@ int main(int argc, char* argv[]) {
         memcpy(bitmap, buffer, BSIZE);
     }
 
-    printf("Data Bitmap:\n");
-    for (uint i = 0; i < super_blk.size; ++i) {
-        printf("%d", read_bit(bitmap, i));
-        if ((i + 1) % 64 == 0)
-            printf("\n");
-    }
-    printf("\n");
+    // printf("Data Bitmap:\n");
+    // for (uint i = 0; i < super_blk.size; ++i) {
+    //     printf("%d", read_bit(bitmap, i));
+    //     if ((i + 1) % 64 == 0)
+    //         printf("\n");
+    // }
+    // printf("\n");
+
+    // printf("Directory Data:\n");
+    // for (uint i = 0; i < super_blk.ninodes; ++i) {
+    //     if (inode_tbl[i].type == T_DIR) {
+    //         printf("[%d]\n", i);
+    //         for (uint j = 0; j < NDIRECT; ++j) {
+    //             if (inode_tbl[i].addrs[j] != 0) {
+    //                 fseek(image, inode_tbl[i].addrs[j] * BSIZE, SEEK_SET);
+    //                 fread(buffer, 1, BSIZE, image);
+    //                 for (struct dirent* dir = (struct dirent*)buffer;
+    //                     dir < (struct dirent*)(buffer + BSIZE); ++dir) {
+    //                     if (dir->inum != 0)
+    //                         printf("%s: %d\n", dir->name, dir->inum);
+    //                 }
+    //             }
+    //         }
+    //         if (inode_tbl[i].addrs[NDIRECT] != 0) {
+    //             uint indirect_blk[NINDIRECT];
+    //             fseek(image, inode_tbl[i].addrs[NDIRECT] * BSIZE, SEEK_SET);
+    //             fread(indirect_blk, 1, BSIZE, image);
+    //             for (uint j = 0; j < NINDIRECT; ++j) {
+    //                 if (indirect_blk[j] != 0) {
+    //                     fseek(image, indirect_blk[j] * BSIZE, SEEK_SET);
+    //                     fread(buffer, 1, BSIZE, image);
+    //                     for (struct dirent* dir = (struct dirent*)buffer;
+    //                         dir < (struct dirent*)(buffer + BSIZE); ++dir) {
+    //                         if (dir->inum != 0)
+    //                             printf("%s: %d\n", dir->name, dir->inum);
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
     // Initialize Reconstructed Data Bitmap
     uchar bitmap_rec[bitmap_blks * BSIZE];
     memset(bitmap_rec, 0, sizeof(bitmap_rec));
-    test_and_set_bit(bitmap_rec, 0);
-    test_and_set_bit(bitmap_rec, 1);
+    set_bit(bitmap_rec, 0);
+    set_bit(bitmap_rec, 1);
     for (uint i = 0; i < inode_blks; ++i) {
-        test_and_set_bit(bitmap_rec, i + 2);
+        set_bit(bitmap_rec, i + 2);
     }
-    test_and_set_bit(bitmap_rec, inode_blks + 2);
+    set_bit(bitmap_rec, inode_blks + 2);
     for (uint i = 0; i < bitmap_blks; ++i) {
-        test_and_set_bit(bitmap_rec, i + inode_blks + 3);
+        set_bit(bitmap_rec, i + inode_blks + 3);
     }
 
-    // Check Inode Table
+    // Initialize Directory-Related Data Structures
+    ushort ref_count[super_blk.ninodes];
+    memset(ref_count, 0, sizeof(ref_count));
+    ref_count[1] = 1; 
+    ushort parent_map[super_blk.ninodes];
+    memset(parent_map, 0, sizeof(parent_map));
+    ushort child_map[super_blk.ninodes];
+    memset(child_map, 0, sizeof(child_map));
+    child_map[1] = 1;
+
+    // Enumerate Inodes - First Pass
     for (uint i = 0; i < super_blk.ninodes; ++i) {
         if (inode_tbl[i].type == 0) {
             continue;
@@ -113,6 +163,25 @@ int main(int argc, char* argv[]) {
                 } else if (test_and_set_bit(bitmap_rec, inode_tbl[i].addrs[j]) != 0) {
                     fprintf(stderr, "address used more than once.\n");
                     exit(1);
+                } else if (inode_tbl[i].type == T_DIR) {
+                    fseek(image, inode_tbl[i].addrs[j] * BSIZE, SEEK_SET);
+                    fread(buffer, 1, BSIZE, image);
+                    struct dirent* dirent = (struct dirent*)buffer;
+                    uint k = 0;
+                    if (j == 0) {
+                        if (strcmp(dirent[0].name, ".") != 0 || strcmp(dirent[1].name, "..") != 0) {
+                            fprintf(stderr, "directory not properly formatted.\n");
+                            exit(1);
+                        }
+                        parent_map[i] = dirent[1].inum;
+                        k = 2;
+                    }
+                    for (; k < DPB; ++k) {
+                        if (dirent[k].inum != 0) {
+                            ref_count[dirent[k].inum] += 1;
+                            child_map[dirent[k].inum] = i;
+                        }
+                    }
                 }
             }
             if (inode_tbl[i].addrs[NDIRECT] == 0) {
@@ -135,6 +204,16 @@ int main(int argc, char* argv[]) {
                     } else if (test_and_set_bit(bitmap_rec, indirect_blk[j]) != 0) {
                         fprintf(stderr, "address used more than once.\n");
                         exit(1);
+                    } else if (inode_tbl[i].type == T_DIR) {
+                        fseek(image, inode_tbl[i].addrs[j] * BSIZE, SEEK_SET);
+                        fread(buffer, 1, BSIZE, image);
+                        struct dirent* dirent = (struct dirent*)buffer;
+                        for (uint k = 0; k < DPB; ++k) {
+                            if (dirent[k].inum != 0) {
+                                ref_count[dirent[k].inum] += 1;
+                                child_map[dirent[k].inum] = i;
+                            }
+                        }
                     }
                 }
             }
@@ -154,36 +233,31 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Read Directory Data
-    printf("Directory Data:\n");
+    // Enumerate Inodes - Second Pass
     for (uint i = 0; i < super_blk.ninodes; ++i) {
-        if (inode_tbl[i].type == T_DIR) {
-            printf("[%d]\n", i);
-            for (uint j = 0; j < NDIRECT; ++j) {
-                if (inode_tbl[i].addrs[j] != 0) {
-                    fseek(image, inode_tbl[i].addrs[j] * BSIZE, SEEK_SET);
-                    fread(buffer, 1, BSIZE, image);
-                    for (struct dirent* dir = (struct dirent*)buffer;
-                        dir < (struct dirent*)(buffer + BSIZE); ++dir) {
-                        if (dir->inum != 0)
-                            printf("%s: %d\n", dir->name, dir->inum);
-                    }
-                }
+        if (inode_tbl[i].type == 0) {
+            if (ref_count[i] > 0) {
+                fprintf(stderr, "inode referred to in directory but marked free.\n");
+                exit(1);
             }
-            if (inode_tbl[i].addrs[NDIRECT] != 0) {
-                uint indirect_blk[NINDIRECT];
-                fseek(image, inode_tbl[i].addrs[NDIRECT] * BSIZE, SEEK_SET);
-                fread(indirect_blk, 1, BSIZE, image);
-                for (uint j = 0; j < NINDIRECT; ++j) {
-                    if (indirect_blk[j] != 0) {
-                        fseek(image, indirect_blk[j] * BSIZE, SEEK_SET);
-                        fread(buffer, 1, BSIZE, image);
-                        for (struct dirent* dir = (struct dirent*)buffer;
-                            dir < (struct dirent*)(buffer + BSIZE); ++dir) {
-                            if (dir->inum != 0)
-                                printf("%s: %d\n", dir->name, dir->inum);
-                        }
-                    }
+        } else {
+            if (ref_count[i] == 0) {
+                fprintf(stderr, "inode marked use but not found in a directory.\n");
+                exit(1);
+            }
+            if (inode_tbl[i].type == T_DIR) {
+                if (ref_count[i] > 1) {
+                    fprintf(stderr, "directory appears more than once in file system.\n");
+                    exit(1);
+                }
+                if (parent_map[i] != child_map[i]) {
+                    fprintf(stderr, "parent directory mismatch.\n");
+                    exit(1);
+                }
+            } else if (inode_tbl[i].type == T_FILE) {
+                if (inode_tbl[i].nlink != ref_count[i]) {
+                    fprintf(stderr, "bad reference count for file.\n");
+                    exit(1);
                 }
             }
         }
