@@ -2,7 +2,7 @@
 all : fscheck
 
 fscheck : fscheck.c
-	gcc fscheck.c -Wall -Werror -O -o fscheck
+	gcc fscheck.c -std=c99 -Wall -Werror -O -o fscheck
 
 .PHONY: clean
 clean :
