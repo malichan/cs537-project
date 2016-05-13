@@ -1,0 +1,10 @@
+CS 537 Project 5 - File Systems
+Ke Ma, Chang Wang
+
+5a) File System Checker
+(Ke Ma)
+Implemented a file system checker for the xv6 file system image, which reads through the image and determines the consistency of inodes, bitmaps, directories and data.
+
+5b) The Small File Optimization
+(Chang Wang)
+In this project, we changed the existing xv6 file system to add high-performance support for small files. The basic idea is if we have a small file, instead of allocating a data block for it, we just store the data itself inside the inode to speed up access to the small file as well as saving some disk space. 
